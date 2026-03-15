@@ -47,5 +47,14 @@ OUTPUT JSON SCHEMA:
       "estimated_minutes": 5-180
     }
   ],
-  "coaching_note": "string (max 200 chars, motivational tip)"
-}"""
+  "coaching_note": "string (max 200 chars, motivational tip)",
+  "summary": "string (max 150 chars, brief plan description in Uzbek)"
+}
+
+The user may provide answers to 3 questions:
+1. Focus: what they want to focus on today
+2. Available time: how much time they have
+3. Energy/mood: how they feel
+
+Use these answers to personalize the plan. If they feel tired, suggest lighter tasks.
+If they have limited time, prioritize the most important 2-3 tasks only."""

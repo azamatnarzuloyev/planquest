@@ -25,3 +25,4 @@ class DailyPlan(BaseModel):
     time_blocks: list[TimeBlock] = Field(default_factory=list, max_length=20)
     suggested_new_tasks: list[SuggestedTask] = Field(default_factory=list, max_length=3)
     coaching_note: str = Field(default="", max_length=200)
+    summary: str = Field(default="", max_length=150)

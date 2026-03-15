@@ -53,6 +53,7 @@ class AIOrchestrator:
             cached = await get_cached(cache_key)
             if cached:
                 await self._log_request(db, user_id, request_type, cached=True)
+                await db.commit()
                 return {"data": cached, "cached": True, "usage": {"used": used, "limit": limit}}
 
         # 3. Get agent and run
@@ -67,6 +68,7 @@ class AIOrchestrator:
                 db, user_id, request_type,
                 status=status, error=str(e),
             )
+            await db.commit()
             raise
 
         # 4. Increment rate limit
@@ -83,7 +85,10 @@ class AIOrchestrator:
             retry_count=metadata.get("retry_count", 0),
         )
 
-        # 6. Cache result
+        # 6. Commit log
+        await db.commit()
+
+        # 7. Cache result
         result_dict = result.model_dump() if hasattr(result, "model_dump") else result
         if cache_key:
             await set_cached(cache_key, result_dict, cache_ttl)

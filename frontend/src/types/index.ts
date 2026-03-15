@@ -292,6 +292,23 @@ export interface DecomposeResponse {
   usage: Record<string, unknown>;
 }
 
+// === AI Questions ===
+export interface QuestionOption {
+  value: string;
+  emoji: string;
+}
+
+export interface AIQuestion {
+  id: string;
+  text: string;
+  options: QuestionOption[];
+}
+
+export interface PlannerQuestions {
+  greeting: string;
+  questions: AIQuestion[];
+}
+
 // === AI Plan ===
 export interface TimeBlock {
   start: string;

@@ -6,10 +6,12 @@ from app.ai.agents.goal_breakdown import GoalBreakdownAgent
 from app.ai.agents.mission_design import MissionDesignAgent
 from app.ai.agents.motivation import MotivationCopyAgent
 from app.ai.agents.planner import PlannerAgent
+from app.ai.agents.questions import QuestionAgent
 from app.ai.agents.recovery import RecoveryAgent
 
-# Agent registry — all 6 agents
+# Agent registry — 7 agents
 _AGENT_REGISTRY: dict[str, type[BaseAgent]] = {
+    "questions": QuestionAgent,
     "daily_plan": PlannerAgent,
     "goal_breakdown": GoalBreakdownAgent,
     "recovery": RecoveryAgent,

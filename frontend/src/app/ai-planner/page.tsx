@@ -1,274 +1,339 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { generatePlan, applyPlan } from "@/lib/api";
-import type { DailyPlan } from "@/types";
-import { Bot, Clock, Sparkles, CheckCircle2, AlertTriangle, Lightbulb, Loader2, Lock } from "lucide-react";
+import { applyPlan } from "@/lib/api";
+import type { DailyPlan, SuggestedTask, TimeBlock } from "@/types";
+import { Bot, CheckCircle2, Loader2, Lock, Trash2, Clock, Send, RefreshCw } from "lucide-react";
 import { haptic } from "@/lib/telegram";
 import { useRouter } from "next/navigation";
+import api from "@/lib/api";
 
-const BLOCK_ICONS: Record<string, string> = {
-  task: "📌",
-  habit: "🔄",
-  focus_session: "🧠",
-  break: "☕",
-};
+const MAX_USER_MESSAGES = 5;
 
+const BLOCK_ICONS: Record<string, string> = { task: "📌", habit: "🔄", focus_session: "🧠", break: "☕" };
 const BLOCK_COLORS: Record<string, string> = {
-  task: "border-l-blue-500 bg-blue-950/20",
-  habit: "border-l-green-500 bg-green-950/20",
-  focus_session: "border-l-purple-500 bg-purple-950/20",
-  break: "border-l-gray-600 bg-gray-800/30",
+  task: "border-l-blue-500", habit: "border-l-green-500",
+  focus_session: "border-l-purple-500", break: "border-l-gray-600",
 };
+
+interface ChatMsg {
+  role: "user" | "assistant";
+  content: string;
+  suggestions?: string[];
+}
 
 export default function AIPlannerPage() {
   const { user } = useAuth();
   const router = useRouter();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
   const [plan, setPlan] = useState<DailyPlan | null>(null);
   const [planRaw, setPlanRaw] = useState<Record<string, unknown> | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [editingBlocks, setEditingBlocks] = useState<TimeBlock[]>([]);
+  const [editingSuggested, setEditingSuggested] = useState<SuggestedTask[]>([]);
   const [applying, setApplying] = useState(false);
-  const [applied, setApplied] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [warnings, setWarnings] = useState<string[]>([]);
   const [tasksCreated, setTasksCreated] = useState(0);
+  const [phase, setPhase] = useState<"chat" | "preview" | "applied">("chat");
+  const [error, setError] = useState<string | null>(null);
 
+  const userMsgCount = messages.filter((m) => m.role === "user").length;
   const isPremium = user?.is_premium;
 
-  async function handleGenerate() {
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
+  useEffect(() => { if (isPremium) setTimeout(() => inputRef.current?.focus(), 500); }, [isPremium]);
+
+  if (!isPremium) {
+    return (
+      <div className="flex items-center justify-center min-h-[calc(100vh-80px)] p-6">
+        <div className="text-center space-y-4 max-w-xs">
+          <div className="w-20 h-20 bg-gradient-to-br from-yellow-600 to-orange-600 rounded-2xl flex items-center justify-center mx-auto"><Lock size={32} /></div>
+          <h2 className="text-lg font-bold">AI Planner</h2>
+          <p className="text-sm text-gray-400">AI rejalashtirish faqat Premium foydalanuvchilar uchun.</p>
+          <button onClick={() => router.push("/profile")} className="bg-gradient-to-r from-yellow-600 to-orange-600 px-6 py-2.5 rounded-xl text-sm font-medium">Premium haqida</button>
+        </div>
+      </div>
+    );
+  }
+
+  async function callAI(msgs: ChatMsg[], forcePlan: boolean = false) {
     setLoading(true);
     setError(null);
-    setPlan(null);
-    setApplied(false);
-    haptic.medium();
-
     try {
-      const result = await generatePlan();
-      setPlan(result.plan);
-      setPlanRaw(result.plan as unknown as Record<string, unknown>);
-      setWarnings(result.validation.warnings || []);
+      const { data } = await api.post("/api/ai/chat-plan", {
+        messages: msgs.map((m) => ({ role: m.role, content: m.content })),
+        force_plan: forcePlan,
+      });
+      const response = data.response;
 
-      if (!result.validation.valid) {
-        setError("AI reja yaratdi, lekin ba'zi muammolar bor: " + result.validation.errors.join(", "));
+      if (response.type === "question") {
+        setMessages([...msgs, { role: "assistant", content: response.message, suggestions: response.suggestions || [] }]);
+      } else if (response.type === "plan") {
+        setMessages([...msgs, { role: "assistant", content: response.summary || response.coaching_note || "Reja tayyor!" }]);
+        setPlan(response as DailyPlan);
+        setPlanRaw(response);
+        setEditingBlocks([...(response.time_blocks || [])]);
+        setEditingSuggested([...(response.suggested_new_tasks || [])]);
+        setPhase("preview");
+        haptic.success();
       }
-      haptic.success();
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Xatolik";
-      // Check for 403/429
-      if (typeof err === "object" && err !== null && "response" in err) {
-        const resp = (err as { response?: { status?: number; data?: { detail?: string } } }).response;
-        if (resp?.status === 403) {
-          setError("AI faqat Premium foydalanuvchilar uchun");
-        } else if (resp?.status === 429) {
-          setError(resp?.data?.detail || "Kunlik limit tugadi");
-        } else {
-          setError(resp?.data?.detail || msg);
-        }
-      } else {
-        setError(msg);
-      }
+    } catch {
+      setError("AI hozir ishlamayapti. Keyinroq urinib ko'ring.");
       haptic.error();
     } finally {
       setLoading(false);
     }
   }
 
+  async function sendMessage(text: string) {
+    if (!text.trim() || loading) return;
+    haptic.light();
+    const newMsgs: ChatMsg[] = [...messages, { role: "user", content: text.trim() }];
+    setMessages(newMsgs);
+    setInput("");
+    await callAI(newMsgs);
+  }
+
+  async function handleFinalize() {
+    haptic.medium();
+    // Add system message and force plan
+    const finalMsgs: ChatMsg[] = [...messages, { role: "user", content: "Shu ma'lumotlar asosida reja yaratib ber" }];
+    setMessages(finalMsgs);
+    await callAI(finalMsgs, true);
+  }
+
   async function handleApply() {
     if (!planRaw) return;
     setApplying(true);
     haptic.heavy();
-
     try {
-      const result = await applyPlan(planRaw);
+      const modified = { ...planRaw, time_blocks: editingBlocks, suggested_new_tasks: editingSuggested };
+      const result = await applyPlan(modified);
       setTasksCreated(result.tasks_created);
-      setApplied(true);
+      setPhase("applied");
       haptic.success();
-    } catch {
-      haptic.error();
-      setError("Rejani qo'llashda xatolik");
-    } finally {
-      setApplying(false);
-    }
+    } catch { haptic.error(); }
+    finally { setApplying(false); }
   }
 
-  // Not premium
-  if (!isPremium) {
-    return (
-      <div className="flex items-center justify-center min-h-[calc(100vh-80px)] p-6">
-        <div className="text-center space-y-4 max-w-xs">
-          <div className="w-20 h-20 bg-gradient-to-br from-yellow-600 to-orange-600 rounded-2xl flex items-center justify-center mx-auto">
-            <Lock size={32} />
-          </div>
-          <h2 className="text-lg font-bold">AI Planner</h2>
-          <p className="text-sm text-gray-400">
-            AI rejalashtirish faqat Premium foydalanuvchilar uchun.
-            Premium bilan kuniga 30 ta AI reja olishingiz mumkin.
-          </p>
-          <button
-            onClick={() => router.push("/profile")}
-            className="bg-gradient-to-r from-yellow-600 to-orange-600 px-6 py-2.5 rounded-xl text-sm font-medium"
-          >
-            Premium haqida
-          </button>
-        </div>
-      </div>
-    );
+  function handleReset() {
+    setMessages([]); setPlan(null); setPlanRaw(null); setPhase("chat");
+    setError(null); setInput(""); setEditingBlocks([]); setEditingSuggested([]);
+    setTimeout(() => inputRef.current?.focus(), 300);
   }
+
+  const reachedLimit = userMsgCount >= MAX_USER_MESSAGES;
 
   return (
-    <div className="p-4 pb-24 space-y-4">
+    <div className="flex flex-col h-[calc(100vh-80px)]">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-blue-600 rounded-xl flex items-center justify-center">
-          <Bot size={20} />
-        </div>
-        <div>
-          <h1 className="text-lg font-bold">AI Planner</h1>
-          <p className="text-xs text-gray-500">Kunlik rejangizni AI bilan tuzing</p>
+      <div className="p-4 pb-2 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-blue-600 rounded-xl flex items-center justify-center">
+            <Bot size={20} />
+          </div>
+          <div className="flex-1">
+            <h1 className="text-lg font-bold">AI Planner</h1>
+            <p className="text-xs text-gray-500">
+              {phase === "chat"
+                ? userMsgCount === 0 ? "Buguningizni tasvirlang" : `${userMsgCount}/${MAX_USER_MESSAGES}`
+                : phase === "preview" ? "Rejani tahrirlang" : ""}
+            </p>
+          </div>
+          {messages.length > 0 && (
+            <button onClick={handleReset} className="text-gray-600 hover:text-white p-1.5 transition-colors" title="Yangidan boshlash">
+              <RefreshCw size={16} />
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Generate button */}
-      {!plan && !loading && (
-        <button
-          onClick={handleGenerate}
-          className="w-full bg-gradient-to-r from-purple-600 to-blue-600 rounded-xl p-5 text-center hover:opacity-90 active:scale-[0.98] transition-all"
-        >
-          <Sparkles size={28} className="mx-auto mb-2 text-yellow-300" />
-          <p className="font-semibold">Bugungi rejani yaratish</p>
-          <p className="text-xs text-blue-200 mt-1">AI sizning task va habitlaringiz asosida reja tuzadi</p>
-        </button>
-      )}
+      {error && <div className="mx-4 mb-2 bg-red-950/30 border border-red-900/30 rounded-xl p-3 text-sm text-red-400 shrink-0">{error}</div>}
 
-      {/* Loading */}
-      {loading && (
-        <div className="bg-gray-900 rounded-xl p-8 text-center">
-          <Loader2 size={32} className="mx-auto mb-3 animate-spin text-blue-400" />
-          <p className="text-sm text-gray-400">AI reja tayyorlamoqda...</p>
-          <p className="text-xs text-gray-600 mt-1">5-10 soniya</p>
-        </div>
-      )}
-
-      {/* Error */}
-      {error && (
-        <div className="bg-red-950/30 border border-red-900/30 rounded-xl p-4 flex items-start gap-3">
-          <AlertTriangle size={18} className="text-red-400 shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm text-red-400">{error}</p>
-            <button onClick={handleGenerate} className="text-xs text-blue-400 mt-2">
-              Qayta urinish →
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Plan preview */}
-      {plan && !applied && (
+      {/* === CHAT === */}
+      {phase === "chat" && (
         <>
-          {/* Time blocks */}
-          <div className="space-y-2">
-            <p className="text-xs text-gray-500 font-medium uppercase tracking-widest px-1">
-              Kunlik reja
-            </p>
-            {plan.time_blocks.map((block, i) => (
-              <div
-                key={i}
-                className={`rounded-xl p-3 border-l-[3px] ${BLOCK_COLORS[block.type] || BLOCK_COLORS.task}`}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-mono text-gray-400">{block.start}</span>
-                  <span className="text-gray-700">→</span>
-                  <span className="text-sm font-mono text-gray-400">{block.end}</span>
-                  <span className="text-lg ml-1">{BLOCK_ICONS[block.type] || "📌"}</span>
+          <div className="flex-1 overflow-y-auto px-4 space-y-3 py-2">
+            {/* Empty state */}
+            {messages.length === 0 && !loading && (
+              <div className="text-center py-8 space-y-4">
+                <p className="text-5xl">🤖</p>
+                <p className="text-sm text-gray-300 font-medium">Bugun qanday kun o'tkazmoqchisiz?</p>
+                <p className="text-xs text-gray-600 max-w-[260px] mx-auto">Nima qilmoqchi ekaningizni yozing — AI sizga reja tuzib beradi</p>
+                <div className="flex flex-wrap justify-center gap-2 pt-1">
+                  {[
+                    "Bugun loyiha ustida ishlashim kerak",
+                    "Yengil kun, dam olaman",
+                    "Deadline bor, ko'p ish bor",
+                    "O'qishga fokus qilaman",
+                  ].map((s) => (
+                    <button key={s} onClick={() => sendMessage(s)}
+                      className="bg-gray-800 hover:bg-gray-700 px-3 py-2 rounded-xl text-xs text-gray-400 transition-all active:scale-95">
+                      {s}
+                    </button>
+                  ))}
                 </div>
-                <p className="text-sm font-medium mt-1">{block.title}</p>
-                {block.mode && (
-                  <span className="text-[10px] text-purple-400 bg-purple-900/30 px-2 py-0.5 rounded-full mt-1 inline-block">
-                    {block.mode}
-                  </span>
-                )}
+              </div>
+            )}
+
+            {/* Messages */}
+            {messages.map((msg, i) => (
+              <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${
+                  msg.role === "user" ? "bg-blue-600 rounded-br-sm" : "bg-gray-800 rounded-bl-sm"
+                }`}>
+                  <p className="text-sm leading-relaxed">{msg.content}</p>
+                  {msg.suggestions && msg.suggestions.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2.5">
+                      {msg.suggestions.map((s, j) => (
+                        <button key={j} onClick={() => sendMessage(s)} disabled={loading || reachedLimit}
+                          className="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded-full text-[11px] text-gray-300 transition-all active:scale-95 disabled:opacity-40">
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
+
+            {/* Typing indicator */}
+            {loading && (
+              <div className="flex justify-start">
+                <div className="bg-gray-800 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-2">
+                  <div className="flex gap-1">
+                    <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div ref={chatEndRef} />
           </div>
 
-          {/* Suggested new tasks */}
-          {plan.suggested_new_tasks.length > 0 && (
-            <div className="bg-gray-900 rounded-xl p-4">
-              <p className="text-xs text-gray-500 font-medium mb-3 flex items-center gap-1">
-                <Lightbulb size={12} className="text-yellow-400" /> Yangi tavsiyalar
-              </p>
+          {/* Bottom area */}
+          <div className="p-3 shrink-0 border-t border-gray-800/50 space-y-2">
+            {/* Limit reached — finalize button */}
+            {reachedLimit && !loading && (
               <div className="space-y-2">
-                {plan.suggested_new_tasks.map((st, i) => (
-                  <div key={i} className="flex items-center gap-3 p-2 bg-gray-800/50 rounded-lg">
-                    <span className="text-lg">💡</span>
+                <p className="text-xs text-center text-gray-500">So'rovlar limiti ({MAX_USER_MESSAGES}/{MAX_USER_MESSAGES})</p>
+                <div className="flex gap-2">
+                  <button onClick={handleFinalize}
+                    className="flex-1 bg-purple-600 rounded-xl py-3 text-sm font-semibold hover:bg-purple-500 active:scale-[0.98] transition-all flex items-center justify-center gap-2">
+                    <CheckCircle2 size={16} /> Yakunlash — reja yaratish
+                  </button>
+                  <button onClick={handleReset}
+                    className="bg-gray-800 rounded-xl py-3 px-4 text-sm hover:bg-gray-700 transition-colors">
+                    <RefreshCw size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Normal input */}
+            {!reachedLimit && (
+              <div className="flex gap-2">
+                <input ref={inputRef} type="text" value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") sendMessage(input); }}
+                  placeholder={userMsgCount === 0 ? "Bugun nima qilmoqchisiz?" : "Davom eting..."}
+                  disabled={loading}
+                  className="flex-1 bg-gray-800 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-purple-500 disabled:opacity-50" />
+                <button onClick={() => sendMessage(input)}
+                  disabled={!input.trim() || loading}
+                  className="bg-purple-600 w-11 h-11 rounded-xl flex items-center justify-center hover:bg-purple-500 active:scale-90 transition-all disabled:opacity-30">
+                  <Send size={18} />
+                </button>
+              </div>
+            )}
+
+            {/* Finalize early button (after 2+ messages) */}
+            {userMsgCount >= 2 && !reachedLimit && !loading && (
+              <button onClick={handleFinalize}
+                className="w-full text-xs text-purple-400 hover:text-purple-300 py-1 transition-colors">
+                Yakunlash va reja yaratish →
+              </button>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* === PREVIEW === */}
+      {phase === "preview" && plan && (
+        <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-4 py-2">
+          {(plan.summary || plan.coaching_note) && (
+            <div className="bg-purple-950/20 border border-purple-900/30 rounded-xl p-4">
+              <p className="text-xs text-purple-400 font-medium mb-1">🤖 AI izohi</p>
+              <p className="text-sm">{plan.summary || plan.coaching_note}</p>
+            </div>
+          )}
+
+          {editingBlocks.length > 0 && (
+            <div>
+              <p className="text-[10px] text-gray-600 font-semibold uppercase tracking-widest mb-2 px-1">Kunlik reja · {editingBlocks.length}</p>
+              <div className="space-y-1.5">
+                {editingBlocks.map((b, i) => (
+                  <div key={i} className={`bg-gray-900 rounded-xl p-3 border-l-[3px] ${BLOCK_COLORS[b.type] || "border-l-gray-600"} flex items-center gap-3`}>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm truncate">{st.title}</p>
-                      <p className="text-[10px] text-gray-500">{st.priority} · {st.difficulty} · {st.estimated_minutes}m</p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-mono text-gray-500">{b.start}–{b.end}</span>
+                        <span>{BLOCK_ICONS[b.type] || "📌"}</span>
+                      </div>
+                      <p className="text-sm mt-0.5 truncate">{b.title}</p>
                     </div>
+                    <button onClick={() => { setEditingBlocks((p) => p.filter((_, j) => j !== i)); haptic.light(); }}
+                      className="text-gray-700 hover:text-red-400 p-1.5 transition-colors"><Trash2 size={14} /></button>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Coaching note */}
-          {plan.coaching_note && (
-            <div className="bg-blue-950/20 border border-blue-900/30 rounded-xl p-3 flex items-start gap-2">
-              <span className="text-lg">💬</span>
-              <p className="text-sm text-blue-300">{plan.coaching_note}</p>
+          {editingSuggested.length > 0 && (
+            <div>
+              <p className="text-[10px] text-gray-600 font-semibold uppercase tracking-widest mb-2 px-1">💡 Yangi tasklar</p>
+              <div className="space-y-1.5">
+                {editingSuggested.map((st, i) => (
+                  <div key={i} className="bg-gray-900 rounded-xl p-3 flex items-center gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm">{st.title}</p>
+                      <span className="text-[10px] text-gray-600 flex items-center gap-1"><Clock size={8} />{st.estimated_minutes}m · {st.difficulty}</span>
+                    </div>
+                    <button onClick={() => { setEditingSuggested((p) => p.filter((_, j) => j !== i)); haptic.light(); }}
+                      className="text-gray-700 hover:text-red-400 p-1.5 transition-colors"><Trash2 size={14} /></button>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
-          {/* Warnings */}
-          {warnings.length > 0 && (
-            <div className="bg-yellow-950/20 border border-yellow-900/30 rounded-xl p-3">
-              <p className="text-xs text-yellow-400 font-medium mb-1">Ogohlantirishlar:</p>
-              {warnings.map((w, i) => (
-                <p key={i} className="text-xs text-yellow-500/70">• {w}</p>
-              ))}
-            </div>
-          )}
-
-          {/* Actions */}
           <div className="flex gap-3">
-            <button
-              onClick={handleApply}
-              disabled={applying}
-              className="flex-1 bg-green-600 rounded-xl py-3.5 font-semibold text-sm flex items-center justify-center gap-2 hover:bg-green-500 active:scale-[0.98] transition-all disabled:opacity-50"
-            >
-              {applying ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-              Qo'llash
+            <button onClick={handleApply} disabled={applying}
+              className="flex-1 bg-green-600 rounded-xl py-3.5 font-semibold text-sm flex items-center justify-center gap-2 hover:bg-green-500 active:scale-[0.98] transition-all disabled:opacity-50">
+              {applying ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />} Tasdiqlash
             </button>
-            <button
-              onClick={handleGenerate}
-              className="bg-gray-800 rounded-xl py-3.5 px-5 text-sm hover:bg-gray-700 transition-colors"
-            >
-              Yangilash
-            </button>
+            <button onClick={handleReset} className="bg-gray-800 rounded-xl py-3.5 px-5 text-sm hover:bg-gray-700 transition-colors">Qayta</button>
           </div>
-        </>
+        </div>
       )}
 
-      {/* Applied success */}
-      {applied && (
-        <div className="bg-green-950/20 border border-green-900/30 rounded-xl p-6 text-center space-y-3">
-          <div className="text-5xl">🎉</div>
-          <h3 className="font-bold text-lg text-green-400">Reja qo'llanildi!</h3>
-          <p className="text-sm text-gray-400">{tasksCreated} ta yangi task yaratildi</p>
-          <div className="flex gap-3 pt-2">
-            <button
-              onClick={() => router.push("/planner")}
-              className="flex-1 bg-blue-600 rounded-xl py-3 text-sm font-medium hover:bg-blue-500 transition-colors"
-            >
-              Planner'ga o'tish
-            </button>
-            <button
-              onClick={() => { setPlan(null); setApplied(false); setTasksCreated(0); }}
-              className="bg-gray-800 rounded-xl py-3 px-5 text-sm hover:bg-gray-700 transition-colors"
-            >
-              Yangi reja
-            </button>
+      {/* === APPLIED === */}
+      {phase === "applied" && (
+        <div className="flex-1 flex items-center justify-center px-4">
+          <div className="bg-green-950/20 border border-green-900/30 rounded-xl p-6 text-center space-y-3 w-full max-w-sm">
+            <p className="text-5xl">🎉</p>
+            <h3 className="font-bold text-lg text-green-400">Reja qo'llanildi!</h3>
+            <p className="text-sm text-gray-400">{tasksCreated} ta yangi task yaratildi</p>
+            <div className="flex gap-3 pt-2">
+              <button onClick={() => router.push("/planner")} className="flex-1 bg-blue-600 rounded-xl py-3 text-sm font-medium hover:bg-blue-500 transition-colors">Planner</button>
+              <button onClick={handleReset} className="bg-gray-800 rounded-xl py-3 px-5 text-sm hover:bg-gray-700 transition-colors">Yangi</button>
+            </div>
           </div>
         </div>
       )}

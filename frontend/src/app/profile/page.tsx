@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { getMySettings, updateMySettings, updateMe, getWallet, buyStreakFreeze } from "@/lib/api";
 import type { UserSettingsResponse, WalletResponse } from "@/types";
 import { Settings, Crown, Share2, Smartphone, ChevronRight, Clock, Moon, Globe, Bell, Shield, ShoppingCart } from "lucide-react";
-import { addToHomeScreen, checkHomeScreenStatus, isTelegram, haptic, showAlert } from "@/lib/telegram";
+import { addToHomeScreen, checkHomeScreenStatus, isTelegram, haptic, showAlert, getTelegramUser } from "@/lib/telegram";
 
 const LEVEL_TITLES: Record<number, string> = {
   1: "Yangi boshlovchi", 5: "Beginner Planner", 10: "Rising Star",
@@ -129,9 +129,17 @@ export default function ProfilePage() {
     <div className="p-4 pb-24 space-y-4">
       {/* Profile header */}
       <div className="bg-gray-900 rounded-xl p-5 text-center">
-        <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full mx-auto mb-3 flex items-center justify-center">
-          <span className="text-3xl font-bold">{user?.first_name?.[0] || "?"}</span>
-        </div>
+        {(() => {
+          const tgUser = getTelegramUser();
+          const photoUrl = tgUser?.photo_url;
+          return photoUrl ? (
+            <img src={photoUrl} alt="" className="w-20 h-20 rounded-full mx-auto mb-3 object-cover" />
+          ) : (
+            <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full mx-auto mb-3 flex items-center justify-center">
+              <span className="text-3xl font-bold">{user?.first_name?.[0] || "?"}</span>
+            </div>
+          );
+        })()}
         <h1 className="text-lg font-bold">{user?.first_name} {user?.last_name || ""}</h1>
         {user?.username && (
           <p className="text-sm text-gray-400">@{user.username}</p>

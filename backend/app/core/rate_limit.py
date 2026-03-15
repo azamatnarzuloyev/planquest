@@ -7,7 +7,7 @@ from starlette.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
-MAX_REQUESTS_PER_MINUTE = 100
+MAX_REQUESTS_PER_MINUTE = 300
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -22,8 +22,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         token = auth[7:]
-        # Use token hash as rate limit key (quick, no JWT decode needed)
-        key = f"ratelimit:{hash(token) % 1000000}"
+        # Use last 16 chars of token as key (unique enough, no collision)
+        key = f"ratelimit:{token[-16:]}"
 
         try:
             from app.core.redis import redis_client

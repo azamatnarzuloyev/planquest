@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     AI_MODEL_DEFAULT: str = "gpt-4o-mini"
     AI_MODEL_ADVANCED: str = "gpt-4o"
-    AI_DAILY_LIMIT: int = 30  # max AI calls per premium user per day
+    AI_DAILY_LIMIT: int = 100  # max AI calls per premium user per day
 
     # CORS
     CORS_ORIGINS: list[str] = ["*"]

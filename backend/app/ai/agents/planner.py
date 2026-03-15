@@ -55,7 +55,16 @@ class PlannerAgent(BaseAgent):
         parts.append(f"\nCompleted today: {context.get('completed_today', 0)} tasks")
         parts.append(f"Habits done: {context.get('habits_done_today', 0)}")
 
-        parts.append("\nGenerate a daily plan as JSON.")
+        # User's answers to 3 questions
+        if context.get("user_focus"):
+            parts.append(f"\n=== User's answers ===")
+            parts.append(f"Focus today: {context['user_focus']}")
+        if context.get("user_available_time"):
+            parts.append(f"Available time: {context['user_available_time']}")
+        if context.get("user_energy"):
+            parts.append(f"Energy/mood: {context['user_energy']}")
+
+        parts.append("\nGenerate a daily plan as JSON. Include a 'summary' field.")
 
         return "\n".join(parts)
 

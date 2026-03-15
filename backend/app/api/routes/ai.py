@@ -35,6 +35,119 @@ async def ai_health_check():
     return await ai_health()
 
 
+# === Pre-planning Questions ===
+
+
+@router.get("/questions")
+async def get_planning_questions(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Get personalized pre-planning questions. Premium only."""
+    check_premium(user)
+
+    # Build light context for question generation
+    from app.services.task_service import get_tasks
+    from app.services.habit_service import get_habits
+    from app.services.streak_service import get_user_streaks
+    from app.services.focus_service import get_focus_stats
+
+    today = date.today()
+    pending = await get_tasks(db, user.id, planned_date=today, status="pending")
+    all_pending = await get_tasks(db, user.id, status="pending")
+    overdue = [t for t in all_pending if t.planned_date < today]
+    habits = await get_habits(db, user.id, filter_today=True)
+    streaks = await get_user_streaks(db, user.id)
+    focus = await get_focus_stats(db, user.id)
+    activity = next((s for s in streaks if s.type == "activity"), None)
+
+    # Calculate missed days
+    missed_days = 0
+    if activity and activity.last_active_date:
+        missed_days = max(0, (today - activity.last_active_date).days - 1)
+
+    days_since_reg = (today - user.created_at.date()).days if user.created_at else 0
+
+    context = {
+        "first_name": user.first_name,
+        "segment": user.segment or "other",
+        "main_intent": user.main_intent or "routine",
+        "current_level": 1,
+        "streak_current": activity.current_count if activity else 0,
+        "pending_count": len(pending),
+        "overdue_count": len(overdue),
+        "habits_done": 0,
+        "habits_total": len(habits),
+        "missed_days": missed_days,
+        "days_since_reg": days_since_reg,
+        "focus_today": focus.get("today_minutes", 0),
+    }
+
+    result = await call_agent(
+        request_type="questions",
+        user_id=user.id,
+        context=context,
+        db=db,
+        cache_key=f"ai:questions:{user.id}:{today.isoformat()}",
+        cache_ttl=7200,  # 2 hours
+    )
+
+    return result
+
+
+# === Conversational Planner ===
+
+
+class ChatMessage(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+
+
+class ChatPlanRequest(BaseModel):
+    messages: list[ChatMessage]
+    force_plan: bool = False  # If true, AI must return plan immediately
+
+
+@router.post("/chat-plan")
+async def chat_plan_endpoint(
+    body: ChatPlanRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Conversational AI planner — chat-style. Premium only."""
+    check_premium(user)
+
+    # Build user context
+    context = await build_planner_context(db, user.id, user)
+
+    # Call conversational planner
+    from app.ai.agents.conversational_planner import chat_plan
+    from app.ai.orchestrator.rate_limiter import check_rate_limit, increment_rate
+
+    allowed, used, limit = await check_rate_limit(user.id)
+    if not allowed:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=429, detail=f"Kunlik limit tugadi ({used}/{limit})")
+
+    messages = [{"role": m.role, "content": m.content} for m in body.messages]
+    result, metadata = await chat_plan(messages, context, force_plan=body.force_plan)
+
+    await increment_rate(user.id)
+
+    # Log
+    from app.ai.models.ai_request_log import AIRequestLog
+    log = AIRequestLog(
+        user_id=user.id, agent="chat_plan", model=metadata.get("model", ""),
+        input_tokens=metadata.get("input_tokens", 0),
+        output_tokens=metadata.get("output_tokens", 0),
+        latency_ms=metadata.get("latency_ms", 0), status="success",
+    )
+    db.add(log)
+    await db.commit()
+
+    return {"response": result, "usage": {"used": used + 1, "limit": limit}}
+
+
 # === Plan Generation ===
 
 
@@ -45,9 +158,15 @@ class PlanResponse(BaseModel):
     usage: dict = {}
 
 
+class PlanGenerateRequest(BaseModel):
+    focus: str | None = None       # "Bugun nimaga fokus qilasiz?"
+    available_time: str | None = None  # "Qancha vaqtingiz bor?"
+    energy: str | None = None      # "Kayfiyatingiz qanday?"
+
+
 class PlanApplyRequest(BaseModel):
-    plan: dict  # The plan data to apply
-    apply_suggested: bool = True  # Whether to create suggested tasks
+    plan: dict
+    apply_suggested: bool = True
 
 
 class PlanApplyResponse(BaseModel):
@@ -57,18 +176,29 @@ class PlanApplyResponse(BaseModel):
 
 @router.post("/plan", response_model=PlanResponse)
 async def generate_plan(
+    body: PlanGenerateRequest | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> PlanResponse:
-    """Generate an AI daily plan. Premium only."""
+    """Generate an AI daily plan with optional user answers. Premium only."""
     check_premium(user)
 
     # Build context
     context = await build_planner_context(db, user.id, user)
 
-    # Call AI
+    # Add user answers to context
+    if body:
+        if body.focus:
+            context["user_focus"] = body.focus
+        if body.available_time:
+            context["user_available_time"] = body.available_time
+        if body.energy:
+            context["user_energy"] = body.energy
+
+    # Call AI — no cache if user provided custom answers
     today_str = date.today().isoformat()
-    cache_key = f"ai:plan:{user.id}:{today_str}"
+    has_custom = body and (body.focus or body.available_time or body.energy)
+    cache_key = None if has_custom else f"ai:plan:{user.id}:{today_str}"
 
     result = await call_agent(
         request_type="daily_plan",
@@ -102,22 +232,45 @@ async def apply_plan(
     check_premium(user)
 
     created = 0
+    plan = DailyPlan.model_validate(body.plan)
+    today = date.today()
 
+    # Validate
+    is_valid, errors, _ = validate_plan(plan)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=f"Invalid plan: {errors}")
+
+    # 1. Create tasks from time_blocks (new tasks — no ref_id)
+    for block in plan.time_blocks:
+        if block.type == "task" and not block.ref_id:
+            # Parse duration from time block
+            try:
+                sh, sm = map(int, block.start.split(":"))
+                eh, em = map(int, block.end.split(":"))
+                minutes = (eh * 60 + em) - (sh * 60 + sm)
+            except (ValueError, AttributeError):
+                minutes = 30
+
+            from app.schemas.task import TaskCreate as TC
+            await create_task(db, user.id, TC(
+                title=block.title,
+                planned_date=today,
+                priority="medium",
+                difficulty="medium",
+                estimated_minutes=max(5, min(180, minutes)),
+                source="ai_plan",
+            ))
+            created += 1
+
+    # 2. Create suggested_new_tasks
     if body.apply_suggested:
-        plan = DailyPlan.model_validate(body.plan)
-        today = date.today()
-
-        # Validate
-        is_valid, errors, _ = validate_plan(plan)
-        if not is_valid:
-            raise HTTPException(status_code=400, detail=f"Invalid plan: {errors}")
-
-        # Create suggested tasks
         task_creates = map_suggested_tasks(plan, today)
         for tc in task_creates:
             tc.source = "ai_plan"
             await create_task(db, user.id, tc)
             created += 1
+
+    await db.commit()
 
     return PlanApplyResponse(
         tasks_created=created,

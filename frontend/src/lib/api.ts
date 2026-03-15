@@ -24,6 +24,7 @@ import type {
   DecomposeResponse,
   CoachingResponse,
   RecoveryResponse,
+  PlannerQuestions,
 } from "@/types";
 
 const api = axios.create({
@@ -240,8 +241,17 @@ export async function applyDecomposition(goalId: string, decomposition: Record<s
 }
 
 // === AI ===
-export async function generatePlan(): Promise<PlanResponse> {
-  const { data } = await api.post<PlanResponse>("/api/ai/plan");
+export async function getAIQuestions(): Promise<PlannerQuestions> {
+  const { data } = await api.get<{ data: PlannerQuestions }>("/api/ai/questions");
+  return data.data;
+}
+
+export async function generatePlan(focus?: string, availableTime?: string, energy?: string): Promise<PlanResponse> {
+  const body: Record<string, string> = {};
+  if (focus) body.focus = focus;
+  if (availableTime) body.available_time = availableTime;
+  if (energy) body.energy = energy;
+  const { data } = await api.post<PlanResponse>("/api/ai/plan", Object.keys(body).length > 0 ? body : undefined);
   return data;
 }
 
