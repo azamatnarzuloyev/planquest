@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+/* Telegram Mini App — safe area CSS variables (provided by SDK) */
+:root {
+  --tg-viewport-height: 100vh;
+  --tg-viewport-stable-height: 100vh;
+}
+
+/* Remove tap highlight on mobile */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Scrollbar hide utility */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Bottom sheet slide-up animation */
+@keyframes slide-up {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-up {
+  animation: slide-up 0.25s ease-out;
+}
+
+/* Safe area padding helpers */
+.safe-top {
+  padding-top: var(--tg-content-safe-area-inset-top, 0px);
+}
+
+.safe-bottom {
+  padding-bottom: var(--tg-content-safe-area-inset-bottom, 0px);
+}
