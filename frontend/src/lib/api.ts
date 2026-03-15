@@ -117,8 +117,8 @@ export async function completeTask(taskId: string): Promise<TaskCompleteResponse
 }
 
 // === Habits ===
-export async function getHabits(): Promise<HabitWithLogResponse[]> {
-  const { data } = await api.get<HabitWithLogResponse[]>("/api/habits");
+export async function getHabits(showAll: boolean = false): Promise<HabitWithLogResponse[]> {
+  const { data } = await api.get<HabitWithLogResponse[]>("/api/habits", { params: showAll ? { all: true } : {} });
   return data;
 }
 

@@ -79,7 +79,7 @@ export default function ProgressPage() {
   const level = progress?.current_level || 1;
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-4 pb-24 space-y-4">
       <h1 className="text-xl font-bold">📊 Progress</h1>
 
       {/* Level Card */}

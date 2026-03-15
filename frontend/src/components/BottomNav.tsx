@@ -24,7 +24,13 @@ export default function BottomNav() {
           return (
             <button
               key={tab.path}
-              onClick={() => router.push(tab.path)}
+              onClick={() => {
+                if (pathname === tab.path) {
+                  router.refresh();
+                } else {
+                  router.push(tab.path);
+                }
+              }}
               className={`flex flex-col items-center justify-center w-full h-full transition-colors ${
                 isActive
                   ? "text-blue-400"

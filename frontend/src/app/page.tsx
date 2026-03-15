@@ -7,7 +7,7 @@ import type { TaskResponse, HabitWithLogResponse, StreakResponse, FocusStatsResp
 import { Flame, Target, Zap, CheckCircle2, Circle, Timer, Sparkles, Gift } from "lucide-react";
 import ProgressRing from "@/components/ProgressRing";
 import XpToast from "@/components/XpToast";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { haptic } from "@/lib/telegram";
 
 export default function HomePage() {
@@ -50,6 +50,12 @@ export default function HomePage() {
   useEffect(() => {
     if (isAuthenticated) loadData();
   }, [isAuthenticated, loadData]);
+
+  // Reload when navigating back to home
+  useEffect(() => {
+    if (isAuthenticated) loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleCompleteTask(taskId: string) {
     try {
@@ -121,7 +127,7 @@ export default function HomePage() {
   }
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-4 pb-24 space-y-4">
       {/* XP Toast */}
       {xpToast !== null && <XpToast xp={xpToast} onDone={() => setXpToast(null)} />}
 

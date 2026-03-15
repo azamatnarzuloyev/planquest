@@ -46,11 +46,12 @@ async def create_habit_endpoint(
 
 @router.get("", response_model=list[HabitWithLogResponse])
 async def list_habits(
+    all: bool = Query(default=False, description="Show all habits ignoring frequency filter"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[HabitWithLogResponse]:
-    """List all active habits with today's log status and streak."""
-    habits = await get_habits(db, user.id)
+    """List active habits with today's log status and streak. By default filters by today's frequency."""
+    habits = await get_habits(db, user.id, filter_today=not all)
     today = date.today()
     result = []
     for habit in habits:

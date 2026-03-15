@@ -126,7 +126,7 @@ export default function ProfilePage() {
   const level = progress?.current_level || 1;
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-4 pb-24 space-y-4">
       {/* Profile header */}
       <div className="bg-gray-900 rounded-xl p-5 text-center">
         <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full mx-auto mb-3 flex items-center justify-center">

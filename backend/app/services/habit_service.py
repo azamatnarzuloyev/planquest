@@ -36,13 +36,38 @@ async def create_habit(db: AsyncSession, user_id: UUID, data: HabitCreate) -> Ha
     return habit
 
 
-async def get_habits(db: AsyncSession, user_id: UUID, include_archived: bool = False) -> list[Habit]:
+async def get_habits(
+    db: AsyncSession, user_id: UUID, include_archived: bool = False, filter_today: bool = False
+) -> list[Habit]:
     query = select(Habit).where(Habit.user_id == user_id)
     if not include_archived:
         query = query.where(Habit.status != "archived")
     query = query.order_by(Habit.created_at.asc())
     result = await db.execute(query)
-    return list(result.scalars().all())
+    habits = list(result.scalars().all())
+
+    if filter_today:
+        habits = [h for h in habits if _is_habit_active_today(h)]
+
+    return habits
+
+
+def _is_habit_active_today(habit: Habit) -> bool:
+    """Check if habit should be shown today based on frequency."""
+    today_weekday = date.today().weekday()  # 0=Monday, 6=Sunday
+
+    if habit.frequency == "daily":
+        return True
+    elif habit.frequency == "weekdays":
+        return today_weekday < 5  # Mon-Fri
+    elif habit.frequency == "3_per_week":
+        # Show Mon, Wed, Fri by default
+        return today_weekday in (0, 2, 4)
+    elif habit.frequency == "custom":
+        if habit.frequency_days:
+            return today_weekday in habit.frequency_days
+        return True
+    return True
 
 
 async def get_habit_by_id(db: AsyncSession, habit_id: UUID, user_id: UUID) -> Habit | None:
