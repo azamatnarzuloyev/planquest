@@ -46,6 +46,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.reminders.generate_weekly_missions",
         "schedule": crontab(hour=0, minute=10, day_of_week=1),  # Monday 00:10 UTC
     },
+    "check-referral-d7-bonus": {
+        "task": "app.tasks.reminders.check_referral_d7_bonus",
+        "schedule": crontab(hour=12, minute=0),  # Noon UTC daily
+    },
+    "send-weekly-review-reminder": {
+        "task": "app.tasks.reminders.send_weekly_review_reminder",
+        "schedule": crontab(hour=14, minute=0, day_of_week=0),  # Sunday 14:00 UTC
+    },
 }
 
 # Import tasks explicitly for registration

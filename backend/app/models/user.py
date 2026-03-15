@@ -17,7 +17,12 @@ class User(Base, UUIDMixin, TimestampMixin):
     last_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    segment: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # 4-layer profiling
+    segment: Mapped[str | None] = mapped_column(String(50), nullable=True)          # life segment
+    main_intent: Mapped[str | None] = mapped_column(String(50), nullable=True)      # what they want help with
+    daily_rhythm: Mapped[str | None] = mapped_column(String(20), nullable=True)     # early/normal/late/mixed
+    commitment_level: Mapped[str | None] = mapped_column(String(10), nullable=True) # easy/medium/hard
+
     timezone: Mapped[str] = mapped_column(String(50), server_default="UTC", nullable=False)
     language: Mapped[str] = mapped_column(String(10), server_default="uz", nullable=False)
 

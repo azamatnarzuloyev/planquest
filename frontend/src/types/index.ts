@@ -221,6 +221,109 @@ export interface ChestOpenResponse {
   };
 }
 
+// === AI Coaching ===
+export interface CoachingInsight {
+  type: string;
+  icon: string;
+  title: string;
+  description: string;
+  action_suggestion: string | null;
+}
+
+export interface CoachingResponse {
+  data: {
+    insights: CoachingInsight[];
+    burnout_risk: string;
+    overall_trend: string;
+    summary: string;
+  };
+  cached: boolean;
+}
+
+// === AI Recovery ===
+export interface RecoveryResponse {
+  data: {
+    recovery_type: string;
+    missed_days: number;
+    plan: {
+      today: {
+        focus: string;
+        tasks_to_prioritize: string[];
+        tasks_to_reschedule: { task_id: string; new_date: string }[];
+        tasks_to_archive: string[];
+        reduced_habit_target: boolean;
+      };
+      next_days: { date: string; focus: string; return_to_normal: boolean }[];
+    };
+    motivation: string;
+  } | null;
+  message?: string;
+}
+
+// === Goal ===
+export interface GoalResponse {
+  id: string;
+  user_id: string;
+  parent_goal_id: string | null;
+  title: string;
+  description: string;
+  category: string;
+  level: string;
+  target_date: string | null;
+  progress_percent: number;
+  status: string;
+  linked_tasks_total: number;
+  linked_tasks_done: number;
+  created_at: string;
+}
+
+export interface DecomposeResponse {
+  decomposition: {
+    goal_title: string;
+    total_weeks: number;
+    milestones: {
+      week: number;
+      title: string;
+      tasks: { title: string; difficulty: string; estimated_minutes: number; day_offset: number }[];
+    }[];
+    summary: string;
+  };
+  cached: boolean;
+  usage: Record<string, unknown>;
+}
+
+// === AI Plan ===
+export interface TimeBlock {
+  start: string;
+  end: string;
+  type: string;
+  ref_id: string | null;
+  title: string;
+  mode: string | null;
+}
+
+export interface SuggestedTask {
+  title: string;
+  priority: string;
+  difficulty: string;
+  estimated_minutes: number;
+}
+
+export interface DailyPlan {
+  plan_type: string;
+  date: string;
+  time_blocks: TimeBlock[];
+  suggested_new_tasks: SuggestedTask[];
+  coaching_note: string;
+}
+
+export interface PlanResponse {
+  plan: DailyPlan;
+  validation: { valid: boolean; errors: string[]; warnings: string[] };
+  cached: boolean;
+  usage: Record<string, unknown>;
+}
+
 // === Streak ===
 export interface StreakResponse {
   type: string;

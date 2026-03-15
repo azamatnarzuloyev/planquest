@@ -19,6 +19,11 @@ import type {
   ShopPurchaseResponse,
   ChestResponse,
   ChestOpenResponse,
+  PlanResponse,
+  GoalResponse,
+  DecomposeResponse,
+  CoachingResponse,
+  RecoveryResponse,
 } from "@/types";
 
 const api = axios.create({
@@ -198,6 +203,53 @@ export async function getMissions(type: "daily" | "weekly" = "daily"): Promise<M
   return data;
 }
 
+// === AI Coaching & Recovery ===
+export async function getCoaching(): Promise<CoachingResponse> {
+  const { data } = await api.get<CoachingResponse>("/api/ai/coach");
+  return data;
+}
+
+export async function getRecoveryPlan(): Promise<RecoveryResponse> {
+  const { data } = await api.post<RecoveryResponse>("/api/ai/recover");
+  return data;
+}
+
+// === Goals ===
+export async function getGoals(): Promise<GoalResponse[]> {
+  const { data } = await api.get<GoalResponse[]>("/api/goals");
+  return data;
+}
+
+export async function createGoal(goal: { title: string; description?: string; category?: string; level?: string; target_date?: string }): Promise<GoalResponse> {
+  const { data } = await api.post<GoalResponse>("/api/goals", goal);
+  return data;
+}
+
+export async function deleteGoal(goalId: string): Promise<void> {
+  await api.delete(`/api/goals/${goalId}`);
+}
+
+export async function decomposeGoal(goalId: string): Promise<DecomposeResponse> {
+  const { data } = await api.post<DecomposeResponse>(`/api/ai/goals/${goalId}/decompose`);
+  return data;
+}
+
+export async function applyDecomposition(goalId: string, decomposition: Record<string, unknown>): Promise<{ tasks_created: number; weeks: number; message: string }> {
+  const { data } = await api.post("/api/ai/goals/decompose/apply", { goal_id: goalId, decomposition });
+  return data;
+}
+
+// === AI ===
+export async function generatePlan(): Promise<PlanResponse> {
+  const { data } = await api.post<PlanResponse>("/api/ai/plan");
+  return data;
+}
+
+export async function applyPlan(plan: Record<string, unknown>): Promise<{ tasks_created: number; message: string }> {
+  const { data } = await api.post("/api/ai/plan/apply", { plan, apply_suggested: true });
+  return data;
+}
+
 // === Stats ===
 export async function getWeeklyStats(): Promise<{ date: string; day: string; tasks: number; habits: number; total: number; is_today: boolean }[]> {
   const { data } = await api.get("/api/users/me/weekly");
@@ -206,6 +258,12 @@ export async function getWeeklyStats(): Promise<{ date: string; day: string; tas
 
 export async function getTotalStats(): Promise<{ total_tasks_completed: number; total_habits_logged: number }> {
   const { data } = await api.get("/api/users/me/stats");
+  return data;
+}
+
+// === Weekly Review ===
+export async function getWeeklyReview(week?: string): Promise<Record<string, unknown>> {
+  const { data } = await api.get("/api/reviews/weekly", { params: week ? { week } : {} });
   return data;
 }
 

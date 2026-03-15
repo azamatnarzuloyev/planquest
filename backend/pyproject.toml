@@ -17,6 +17,8 @@ dependencies = [
     "pyjwt>=2.9.0",
     "celery[redis]>=5.4.0",
     "pytz>=2024.1",
+    "openai>=1.60.0",
+    "Pillow>=11.0.0",
 ]
 
 [project.optional-dependencies]

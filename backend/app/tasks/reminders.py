@@ -135,11 +135,30 @@ async def _send_morning_reminders_async():
         else:
             task_text = "  Bugungi reja bo'sh. /add bilan qo'shing!\n"
 
+        # AI motivation for premium users
+        ai_msg = ""
+        if user.is_premium:
+            try:
+                from app.ai.services.ai_service import call_agent
+                async with async_session() as db:
+                    result = await call_agent("motivation", user.id, {
+                        "notification_type": "morning_reminder",
+                        "first_name": user.first_name,
+                        "streak": streak_count,
+                        "tasks_done": 0, "tasks_total": len(tasks),
+                        "habits_done": 0, "habits_total": 0,
+                        "level": 1,
+                    }, db, cache_key=f"ai:motiv:morning:{user.id}:{date.today()}", cache_ttl=21600)
+                    await db.commit()
+                ai_msg = result["data"].get("message", "")
+            except Exception:
+                pass  # Fallback to template
+
         text = (
             f"🌅 <b>Xayrli tong, {user.first_name}!</b>\n\n"
             f"🔥 Streak: <b>{streak_count} kun</b>\n\n"
             f"📋 Bugungi vazifalar:\n{task_text}\n"
-            f"Yaxshi kun o'tkazing! 💪"
+            f"{ai_msg or 'Yaxshi kun o\\'tkazing! 💪'}"
         )
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -299,6 +318,76 @@ async def _reset_counts():
     logger.info("Daily message counts reset")
 
 
+# === Referral D7 Bonus ===
+
+
+@celery_app.task(name="app.tasks.reminders.check_referral_d7_bonus")
+def check_referral_d7_bonus():
+    """Check if any referred users qualify for D7 bonus."""
+    asyncio.run(_check_d7_async())
+
+
+async def _check_d7_async():
+    from app.core.database import async_session
+    from app.services.referral_service import check_d7_bonus
+
+    async with async_session() as db:
+        rewarded = await check_d7_bonus(db)
+        await db.commit()
+
+    logger.info(f"D7 referral bonus: {rewarded} users rewarded")
+
+
+# === Weekly Review Reminder ===
+
+
+@celery_app.task(name="app.tasks.reminders.send_weekly_review_reminder")
+def send_weekly_review_reminder():
+    """Send weekly review reminder on Sunday."""
+    asyncio.run(_send_weekly_review_async())
+
+
+async def _send_weekly_review_async():
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+    from app.core.database import async_session
+    from app.models.user import User
+    from app.models.user_settings import UserSettings
+    from app.config import settings as app_settings
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(User, UserSettings)
+            .join(UserSettings, UserSettings.user_id == User.id)
+            .where(User.is_active == True)
+        )
+        rows = result.all()
+
+    sent = 0
+    for user, user_settings in rows:
+        if user_settings.daily_message_count >= user_settings.max_daily_messages:
+            continue
+
+        text = (
+            f"📊 <b>{user.first_name}, haftalik ko'rib chiqish tayyor!</b>\n\n"
+            "Bu hafta nimaga erishdingiz? Task, habit va focus natijalaringizni ko'ring."
+        )
+
+        keyboard = None
+        if app_settings.MINI_APP_URL:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="📊 Ko'rib chiqish",
+                    web_app=WebAppInfo(url=f"{app_settings.MINI_APP_URL}/weekly-review"),
+                )],
+            ])
+
+        await _send_message(user.telegram_id, text, keyboard)
+        await _increment_message_count(user.id)
+        sent += 1
+
+    logger.info(f"Weekly review reminders sent to {sent} users")
+
+
 # === Mission Generation ===
 
 
@@ -324,16 +413,62 @@ async def _generate_daily_missions_async():
         users = result.scalars().all()
 
     count = 0
+    ai_count = 0
     for user in users:
         try:
             async with async_session() as db:
+                # Premium users → AI-designed missions
+                if user.is_premium:
+                    try:
+                        from app.ai.services.ai_service import call_agent
+                        from app.ai.validators.business_rules import validate_mission_suggestions
+                        from app.ai.schemas.missions import MissionSuggestions
+                        from app.services.xp_service import get_or_create_progress
+                        from app.services.focus_service import get_focus_stats
+
+                        progress = await get_or_create_progress(db, user.id)
+                        focus = await get_focus_stats(db, user.id)
+
+                        context = {
+                            "segment": user.segment,
+                            "current_level": progress.current_level,
+                            "streak_current": 0,
+                            "stats": {
+                                "avg_tasks": 3, "avg_habits": 2,
+                                "avg_focus": focus.get("week_minutes", 0) / 7,
+                                "focus_used": focus.get("total_sessions", 0) > 0,
+                            },
+                            "underused_features": [],
+                        }
+
+                        result = await call_agent("mission_design", user.id, context, db)
+                        suggestions = MissionSuggestions.model_validate(result["data"])
+                        validated, _ = validate_mission_suggestions(suggestions)
+
+                        from app.models.mission import Mission
+                        for m in validated.suggested_missions:
+                            db.add(Mission(
+                                user_id=user.id, type="daily", difficulty=m.difficulty,
+                                title=m.title, description=m.description, action=m.action,
+                                target_value=m.target_value, reward_xp=m.reward_xp,
+                                reward_coins=m.reward_coins, status="active",
+                                assigned_date=date.today(),
+                            ))
+                        await db.commit()
+                        ai_count += 1
+                        count += 1
+                        continue
+                    except Exception:
+                        logger.warning(f"AI mission failed for {user.id}, falling back to templates")
+
+                # Free users (or AI fallback) → template missions
                 await generate_daily_missions(db, user.id)
                 await db.commit()
                 count += 1
         except Exception:
             logger.exception(f"Failed to generate daily missions for user {user.id}")
 
-    logger.info(f"Generated daily missions for {count} users")
+    logger.info(f"Generated daily missions for {count} users ({ai_count} AI-designed)")
 
 
 @celery_app.task(name="app.tasks.reminders.generate_weekly_missions")

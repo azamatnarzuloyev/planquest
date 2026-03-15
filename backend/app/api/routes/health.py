@@ -35,7 +35,15 @@ async def health_ready():
     except Exception as e:
         checks["redis"] = f"error: {str(e)}"
 
-    all_ok = all(v == "ok" for v in checks.values())
+    # Check AI provider
+    try:
+        from app.ai.providers.openai_provider import get_openai_provider
+        provider = get_openai_provider()
+        checks["ai"] = "ok" if provider.client else "not_configured"
+    except Exception:
+        checks["ai"] = "not_configured"
+
+    all_ok = all(v == "ok" for v in checks.values() if v != "not_configured")
     return {
         "status": "ok" if all_ok else "degraded",
         **checks,

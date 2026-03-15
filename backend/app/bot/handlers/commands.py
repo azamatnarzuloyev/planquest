@@ -22,26 +22,29 @@ async def cmd_start(message: Message, user=None) -> None:
     # Handle deep link referral: /start ref_XXXXXX
     args = message.text.split()
     if len(args) > 1 and args[1].startswith("ref_"):
-        referral_code = args[1][4:]  # Extract code after "ref_"
+        referral_code = args[1][4:]
         if user:
-            async with async_session() as db:
-                from app.models.user import User
-                from sqlalchemy import select
-
-                referrer = await db.execute(
-                    select(User).where(User.referral_code == referral_code)
-                )
-                referrer_user = referrer.scalar_one_or_none()
-                if referrer_user and referrer_user.id != user.id:
+            try:
+                from app.services.referral_service import create_referral
+                async with async_session() as db:
+                    await create_referral(db, referral_code, user.id)
+                    # Also set referred_by on user
                     db_user = await get_user_by_telegram_id(db, user.telegram_id)
                     if db_user and db_user.referred_by is None:
-                        db_user.referred_by = referrer_user.id
-                        await db.commit()
+                        from app.models.user import User as UserModel
+                        from sqlalchemy import select
+                        ref = await db.execute(select(UserModel).where(UserModel.referral_code == referral_code))
+                        referrer = ref.scalar_one_or_none()
+                        if referrer and referrer.id != user.id:
+                            db_user.referred_by = referrer.id
+                    await db.commit()
+            except Exception:
+                pass  # Don't fail start command on referral error
 
     name = user.first_name if user else (message.from_user.first_name or "")
 
     # New user or incomplete onboarding → start onboarding
-    if user is None or user.onboarding_step < 4:
+    if user is None or user.onboarding_step < 6:
         step = user.onboarding_step if user else 0
 
         if step == 0:
@@ -57,27 +60,38 @@ async def cmd_start(message: Message, user=None) -> None:
                 reply_markup=get_segment_keyboard(),
             )
         elif step == 1:
-            # Waiting for first task
-            await message.answer(
-                "📝 <b>Birinchi vazifangizni yozing!</b>\n\n"
-                "Bugun nima qilmoqchisiz?\n"
-                "<i>Masalan: \"Kitob o'qish\" yoki \"Loyiha ustida ishlash\"</i>"
-            )
+            from app.bot.handlers.onboarding import get_intent_keyboard
+            await message.answer("📌 <b>Bot sizga nimada yordam bersin?</b>", reply_markup=get_intent_keyboard())
         elif step == 2:
-            # Waiting for reminder time
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="🌅 07:00", callback_data="ob_time_07"),
-                    InlineKeyboardButton(text="☀️ 08:00", callback_data="ob_time_08"),
-                ],
-                [
-                    InlineKeyboardButton(text="🌤 09:00", callback_data="ob_time_09"),
-                    InlineKeyboardButton(text="🕙 10:00", callback_data="ob_time_10"),
-                ],
-            ])
             await message.answer(
-                "⏰ <b>Ertalabki eslatma qachon kelsin?</b>",
-                reply_markup=keyboard,
+                "⏰ <b>Kuningiz qanday o'tadi?</b>",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🌅 Erta (6-7)", callback_data="ob_rhy_early")],
+                    [InlineKeyboardButton(text="☀️ O'rtacha (8-9)", callback_data="ob_rhy_normal")],
+                    [InlineKeyboardButton(text="🌙 Kechroq (10+)", callback_data="ob_rhy_late")],
+                    [InlineKeyboardButton(text="🔄 Turlicha", callback_data="ob_rhy_mixed")],
+                ]),
+            )
+        elif step == 3:
+            await message.answer(
+                "📊 <b>Qanchalik reja xohlaysiz?</b>",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🟢 Yengil (2-3 task)", callback_data="ob_com_easy")],
+                    [InlineKeyboardButton(text="🟡 O'rtacha (4-5 task)", callback_data="ob_com_medium")],
+                    [InlineKeyboardButton(text="🔴 Faol (5-7 task)", callback_data="ob_com_hard")],
+                ]),
+            )
+        elif step == 4:
+            await message.answer(
+                "🎯 <b>Asosiy maqsadingiz nima?</b>\n\n"
+                "Hozir erishmoqchi bo'lgan narsani yozing:"
+            )
+        elif step == 5:
+            await message.answer(
+                "Oxirgi qadam!",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🚀 Boshlash!", callback_data="ob_finish")],
+                ]),
             )
         return
 
@@ -120,6 +134,33 @@ HELP_TEXT = (
 @router.message(Command("help"))
 async def cmd_help(message: Message, **kwargs) -> None:
     await message.answer(HELP_TEXT)
+
+
+@router.message(Command("invite"))
+async def cmd_invite(message: Message, user=None, **kwargs) -> None:
+    """Show referral link and stats."""
+    if user is None:
+        await message.answer("Avval /start buyrug'ini yuboring.")
+        return
+
+    from app.services.referral_service import get_referral_stats
+    async with async_session() as db:
+        stats = await get_referral_stats(db, user.id)
+
+    code = stats["referral_code"]
+    link = f"https://t.me/planAIbot?start=ref_{code}"
+
+    text = (
+        f"📨 <b>Do'stlaringizni taklif qiling!</b>\n\n"
+        f"Sizning havolangiz:\n<code>{link}</code>\n\n"
+        f"📊 Statistika:\n"
+        f"  Taklif qilingan: {stats['total_referred']}/{stats['max_referrals']}\n"
+        f"  Aktivlashgan: {stats['activated']}\n\n"
+        f"🎁 Mukofotlar:\n"
+        f"  Referrer: +{100} XP, +{50} 🪙\n"
+        f"  Taklif qilingan: +{50} 🪙"
+    )
+    await message.answer(text)
 
 
 @router.callback_query(lambda c: c.data == "help")

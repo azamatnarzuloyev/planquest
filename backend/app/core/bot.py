@@ -51,6 +51,8 @@ def create_bot_and_dispatcher() -> tuple[Bot, Dispatcher]:
     from app.bot.handlers.focus_commands import router as focus_router
     from app.bot.handlers.stats_commands import router as stats_router
     from app.bot.handlers.mission_commands import router as mission_router
+    from app.bot.handlers.goal_commands import router as goal_cmd_router
+    from app.bot.handlers.ai_commands import router as ai_cmd_router
     from app.bot.handlers.onboarding import router as onboarding_router
 
     dp.include_router(commands_router)
@@ -59,6 +61,8 @@ def create_bot_and_dispatcher() -> tuple[Bot, Dispatcher]:
     dp.include_router(focus_router)
     dp.include_router(stats_router)
     dp.include_router(mission_router)
+    dp.include_router(goal_cmd_router)
+    dp.include_router(ai_cmd_router)
     dp.include_router(onboarding_router)  # Last — catches free text for onboarding
 
     logger.info("Bot and Dispatcher created successfully")

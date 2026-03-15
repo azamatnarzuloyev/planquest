@@ -153,6 +153,16 @@ export default function HomePage() {
         </div>
       </div>
 
+      {/* Welcome banner — new user (created today) */}
+      {user?.created_at && (new Date().getTime() - new Date(user.created_at).getTime()) < 86400000 && (
+        <div className="bg-gradient-to-r from-blue-900/40 to-purple-900/40 border border-blue-800/30 rounded-xl p-4">
+          <p className="text-sm font-semibold">🎉 PlanQuest'ga xush kelibsiz!</p>
+          <p className="text-xs text-gray-400 mt-1">
+            Sizga tayyor reja yaratdik. Bugungi tasklar va habitlarni bajaring — har biri uchun XP olasiz!
+          </p>
+        </div>
+      )}
+
       {/* Today Score + XP */}
       <div className="bg-gray-900 rounded-xl p-4 flex items-center gap-4">
         <ProgressRing
@@ -359,6 +369,20 @@ export default function HomePage() {
         </div>
         <Sparkles size={18} className="text-yellow-300" />
       </button>
+
+      {/* AI Planner CTA */}
+      {user?.is_premium && (
+        <button
+          onClick={() => router.push("/ai-planner")}
+          className="w-full bg-gradient-to-r from-indigo-600 to-violet-600 rounded-xl p-4 flex items-center gap-3 hover:opacity-90 transition-opacity"
+        >
+          <Sparkles size={22} className="text-yellow-300" />
+          <div className="flex-1 text-left">
+            <p className="font-semibold text-sm">AI bilan rejalashtirish</p>
+            <p className="text-xs text-indigo-200">Kunlik rejangizni AI tuzib beradi</p>
+          </div>
+        </button>
+      )}
 
       {/* Daily Missions */}
       {missions.length > 0 && (

@@ -2,9 +2,9 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getStreaks, getFocusStats, getWeeklyStats, getTotalStats, getAchievements } from "@/lib/api";
-import type { StreakResponse, FocusStatsResponse, AchievementResponse } from "@/types";
-import { Flame, Zap, Clock, Trophy, CheckCircle, Target, Repeat } from "lucide-react";
+import { getStreaks, getFocusStats, getWeeklyStats, getTotalStats, getAchievements, getCoaching } from "@/lib/api";
+import type { StreakResponse, FocusStatsResponse, AchievementResponse, CoachingInsight } from "@/types";
+import { Flame, Zap, Clock, Trophy, CheckCircle, Target, Repeat, Bot, Loader2 } from "lucide-react";
 import ProgressRing from "@/components/ProgressRing";
 import WeeklyChart from "@/components/WeeklyChart";
 
@@ -53,6 +53,10 @@ export default function ProgressPage() {
   const [totalStats, setTotalStats] = useState<TotalStats | null>(null);
   const [achievements, setAchievements] = useState<AchievementResponse[]>([]);
   const [achFilter, setAchFilter] = useState<string>("all");
+  const [coachInsights, setCoachInsights] = useState<CoachingInsight[]>([]);
+  const [coachTrend, setCoachTrend] = useState<string>("");
+  const [coachBurnout, setCoachBurnout] = useState<string>("");
+  const [coachLoading, setCoachLoading] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -181,6 +185,69 @@ export default function ProgressPage() {
           <p className="text-[10px] text-gray-600">kun</p>
         </div>
       </div>
+
+      {/* AI Coaching */}
+      {progress && (
+        <div className="bg-gray-900 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold text-sm flex items-center gap-2">
+              <Bot size={16} className="text-purple-400" />
+              AI Coaching
+            </h2>
+            {!coachLoading && (
+              <button
+                onClick={async () => {
+                  setCoachLoading(true);
+                  try {
+                    const r = await getCoaching();
+                    setCoachInsights(r.data.insights);
+                    setCoachTrend(r.data.overall_trend);
+                    setCoachBurnout(r.data.burnout_risk);
+                  } catch {}
+                  finally { setCoachLoading(false); }
+                }}
+                className="text-xs text-purple-400 hover:text-purple-300"
+              >
+                {coachInsights.length > 0 ? "Yangilash" : "Tahlil qilish"} →
+              </button>
+            )}
+          </div>
+
+          {coachLoading && (
+            <div className="text-center py-4">
+              <Loader2 size={20} className="mx-auto animate-spin text-purple-400" />
+              <p className="text-xs text-gray-500 mt-2">AI tahlil qilmoqda...</p>
+            </div>
+          )}
+
+          {!coachLoading && coachInsights.length === 0 && (
+            <p className="text-xs text-gray-600 text-center py-3">
+              "Tahlil qilish" tugmasini bosing — AI 14 kunlik ma'lumotlaringizni tahlil qiladi
+            </p>
+          )}
+
+          {!coachLoading && coachInsights.length > 0 && (
+            <div className="space-y-2">
+              {coachInsights.map((ins, i) => {
+                const iconMap: Record<string, string> = { clock: "⏰", alert: "⚠️", trophy: "🏆", bulb: "💡", chart: "📊", fire: "🔥" };
+                const typeColors: Record<string, string> = { pattern: "border-l-blue-500", warning: "border-l-yellow-500", achievement: "border-l-green-500", suggestion: "border-l-purple-500" };
+                return (
+                  <div key={i} className={`p-2.5 rounded-lg bg-gray-800/50 border-l-2 ${typeColors[ins.type] || "border-l-gray-600"}`}>
+                    <p className="text-xs font-medium">{iconMap[ins.icon] || "💡"} {ins.title}</p>
+                    <p className="text-[10px] text-gray-400 mt-0.5">{ins.description}</p>
+                  </div>
+                );
+              })}
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-[10px] text-gray-500">
+                  Trend: {coachTrend === "improving" ? "📈 Yaxshilanmoqda" : coachTrend === "declining" ? "📉 Pasaymoqda" : "➡️ Barqaror"}
+                </span>
+                {coachBurnout === "high" && <span className="text-[10px] text-red-400 font-medium">⚠️ Burnout xavfi</span>}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Achievements */}
       {achievements.length > 0 && (

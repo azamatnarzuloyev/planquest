@@ -3,7 +3,9 @@ from datetime import date
 
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
+
+from sqlalchemy import select
 
 from app.core.database import async_session
 from app.services.focus_service import get_focus_stats
@@ -51,4 +53,80 @@ async def cmd_stats(message: Message, user=None) -> None:
         f"⏱ Fokus: <b>{focus['today_minutes']}</b> min bugun\n"
     )
 
-    await message.answer(text)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔥 Streak card", callback_data="share_streak"),
+            InlineKeyboardButton(text="⭐ Level card", callback_data="share_level"),
+        ],
+        [InlineKeyboardButton(text="📊 Haftalik card", callback_data="share_weekly")],
+    ])
+
+    await message.answer(text, reply_markup=keyboard)
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("share_"))
+async def cb_share_card(callback, user=None) -> None:
+    """Generate and send a shareable card image."""
+    if user is None:
+        await callback.answer("Xatolik")
+        return
+
+    card_type = callback.data.replace("share_", "")
+    await callback.answer("Card yaratilmoqda...")
+
+    try:
+        from app.services.cards.generator import generate_streak_card, generate_level_card, generate_weekly_card
+
+        async with async_session() as db:
+            if card_type == "streak":
+                streaks = await get_user_streaks(db, user.id)
+                activity = next((s for s in streaks if s.type == "activity"), None)
+                png = generate_streak_card(
+                    user.first_name,
+                    activity.current_count if activity else 0,
+                    activity.best_count if activity else 0,
+                )
+            elif card_type == "level":
+                progress = await get_or_create_progress(db, user.id)
+                await db.commit()
+                titles = {1: "Yangi boshlovchi", 5: "Beginner", 10: "Rising Star", 20: "Pro", 30: "Deep Worker"}
+                title = "Yangi boshlovchi"
+                for k in sorted(titles.keys(), reverse=True):
+                    if progress.current_level >= k:
+                        title = titles[k]
+                        break
+                png = generate_level_card(user.first_name, progress.current_level, title, progress.total_xp)
+            elif card_type == "weekly":
+                from datetime import timedelta
+                from sqlalchemy import func, and_
+                from app.models.task import Task
+                from app.models.habit import HabitLog
+                from app.models.focus_session import FocusSession
+
+                today = date.today()
+                monday = today - timedelta(days=today.weekday())
+                tasks_r = await db.execute(select(func.count()).where(and_(Task.user_id == user.id, Task.planned_date >= monday, Task.status == "completed")))
+                habits_r = await db.execute(select(func.count()).where(and_(HabitLog.user_id == user.id, HabitLog.date >= monday, HabitLog.completed == True)))
+                focus_r = await db.execute(select(func.coalesce(func.sum(FocusSession.actual_duration), 0)).where(and_(FocusSession.user_id == user.id, func.date(FocusSession.started_at) >= monday, FocusSession.status == "completed")))
+                from app.models.xp_event import XpEvent
+                xp_r = await db.execute(select(func.coalesce(func.sum(XpEvent.xp_amount), 0)).where(and_(XpEvent.user_id == user.id, func.date(XpEvent.created_at) >= monday)))
+                streaks = await get_user_streaks(db, user.id)
+                activity = next((s for s in streaks if s.type == "activity"), None)
+
+                png = generate_weekly_card(
+                    user.first_name, tasks_r.scalar_one(), habits_r.scalar_one(),
+                    focus_r.scalar_one(), xp_r.scalar_one(),
+                    activity.current_count if activity else 0,
+                )
+            else:
+                await callback.answer("Noma'lum card turi")
+                return
+
+        photo = BufferedInputFile(png, filename=f"{card_type}_card.png")
+        await callback.message.answer_photo(
+            photo,
+            caption=f"📊 {user.first_name} — PlanQuest\nt.me/planAIbot",
+        )
+    except Exception:
+        logger.exception(f"Card generation error: {card_type}")
+        await callback.message.answer("Card yaratishda xatolik.")
